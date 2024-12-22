@@ -39,6 +39,11 @@ class DataArguments:
     )
     lazy_preprocess: bool = False
 
+    dataset_name: str = field(
+        default="default name",
+        metadata={"help": "dataset name"}
+    )
+
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
@@ -72,6 +77,8 @@ class TrainingArguments(transformers.TrainingArguments):
         default="default name",
         metadata={"help": "Wandb run name."}
     )
+
+
 
 
 @dataclass
@@ -146,65 +153,86 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
         trainer._save(output_dir, state_dict=state_dict)
 
 
-def preprocess(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-    max_len: int,
-    system_message: str = "You are a helpful assistant."
-) -> Dict:
-    roles = {"user": "<|im_start|>user", "assistant": "<|im_start|>assistant"}
+# def preprocess(
+#     sources,
+#     tokenizer: transformers.PreTrainedTokenizer,
+#     max_len: int,
+#     system_message: str = "You are a helpful assistant."
+# ) -> Dict:
+#     roles = {"user": "<|im_start|>user", "assistant": "<|im_start|>assistant"}
     
-    # Get the special tokens from tokenizer
-    chat_format = {
-        "system": "<|im_start|>system\n{}\n<|im_end|>\n",
-        "user": "<|im_start|>user\n{}\n<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n{}\n<|im_end|>\n"
-    }
+#     # Get the special tokens from tokenizer
+#     chat_format = {
+#         "system": "<|im_start|>system\n{}\n<|im_end|>\n",
+#         "user": "<|im_start|>user\n{}\n<|im_end|>\n",
+#         "assistant": "<|im_start|>assistant\n{}\n<|im_end|>\n"
+#     }
 
-    # Apply prompt templates
-    input_ids, targets = [], []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != roles["user"]:
-            source = source[1:]
+#     # Apply prompt templates
+#     input_ids, targets = [], []
+#     for i, source in enumerate(sources):
+#         if roles[source[0]["from"]] != roles["user"]:
+#             source = source[1:]
 
-        input_id, target = [], []
+#         input_id, target = [], []
         
-        # Add system message
-        system_text = chat_format["system"].format(system_message)
-        system_tokens = tokenizer.encode(system_text)
-        input_id += system_tokens
-        target += [IGNORE_TOKEN_ID] * len(system_tokens)
+#         # Add system message
+#         system_text = chat_format["system"].format(system_message)
+#         system_tokens = tokenizer.encode(system_text)
+#         input_id += system_tokens
+#         target += [IGNORE_TOKEN_ID] * len(system_tokens)
         
-        for j, sentence in enumerate(source):
-            role = sentence["from"]
-            text = chat_format[role].format(sentence["value"])
-            tokens = tokenizer.encode(text)
+#         for j, sentence in enumerate(source):
+#             role = sentence["from"]
+#             text = chat_format[role].format(sentence["value"])
+#             tokens = tokenizer.encode(text)
             
-            input_id += tokens
-            if role == "user":
-                target += [IGNORE_TOKEN_ID] * len(tokens)
-            elif role == "assistant":
-                target += tokens
-            else:
-                raise NotImplementedError
+#             input_id += tokens
+#             if role == "user":
+#                 target += [IGNORE_TOKEN_ID] * len(tokens)
+#             elif role == "assistant":
+#                 target += tokens
+#             else:
+#                 raise NotImplementedError
                 
-        # Truncate and pad
-        input_id = input_id[:max_len]
-        target = target[:max_len]
-        input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
-        target += [IGNORE_TOKEN_ID] * (max_len - len(target))
+#         # Truncate and pad
+#         input_id = input_id[:max_len]
+#         target = target[:max_len]
+#         input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
+#         target += [IGNORE_TOKEN_ID] * (max_len - len(target))
         
-        input_ids.append(input_id)
-        targets.append(target)
+#         input_ids.append(input_id)
+#         targets.append(target)
 
-    input_ids = torch.tensor(input_ids, dtype=torch.long)
-    targets = torch.tensor(targets, dtype=torch.long)
+#     input_ids = torch.tensor(input_ids, dtype=torch.long)
+#     targets = torch.tensor(targets, dtype=torch.long)
 
-    return dict(
-        input_ids=input_ids,
-        labels=targets,
-        attention_mask=input_ids.ne(tokenizer.pad_token_id),
+#     return dict(
+#         input_ids=input_ids,
+#         labels=targets,
+#         attention_mask=input_ids.ne(tokenizer.pad_token_id),
+#     )
+
+#############################
+# New plain-text preprocess #
+#############################
+def preprocess_plain_text(
+    texts: List[str],
+    tokenizer: transformers.PreTrainedTokenizer,
+    max_len: int
+) -> Dict[str, torch.Tensor]:
+    # Tokenize plain text examples
+    encodings = tokenizer(
+        texts,
+        max_length=max_len,
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt"
     )
+    # Use input_ids as labels for causal LM
+    encodings["labels"] = encodings["input_ids"].clone()
+    return encodings
+
 
 
 
@@ -212,52 +240,166 @@ class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
     def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int):
-        super(LazySupervisedDataset, self).__init__()
+        # super(LazySupervisedDataset, self).__init__()
+        # self.tokenizer = tokenizer
+        # self.max_len = max_len
+
+        # rank0_print("Formatting inputs...Skip in lazy mode")
+        # self.tokenizer = tokenizer
+        # self.raw_data = raw_data
+        # self.cached_data_dict = {}
+
         self.tokenizer = tokenizer
         self.max_len = max_len
+        self.raw_data = raw_data  # expecting list of dict with {"text": "..."} or similar
+        self.cached = {}
 
-        rank0_print("Formatting inputs...Skip in lazy mode")
-        self.tokenizer = tokenizer
-        self.raw_data = raw_data
-        self.cached_data_dict = {}
 
     def __len__(self):
         return len(self.raw_data)
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        if i in self.cached_data_dict:
-            return self.cached_data_dict[i]
+        # if i in self.cached_data_dict:
+        #     return self.cached_data_dict[i]
 
-        ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer, self.max_len)
-        ret = dict(
-            input_ids=ret["input_ids"][0],
-            labels=ret["labels"][0],
-            attention_mask=ret["attention_mask"][0],
-        )
-        self.cached_data_dict[i] = ret
+        # ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer, self.max_len)
+        # ret = dict(
+        #     input_ids=ret["input_ids"][0],
+        #     labels=ret["labels"][0],
+        #     attention_mask=ret["attention_mask"][0],
+        # )
+        # self.cached_data_dict[i] = ret
 
-        return ret
+        # return ret
+        if i in self.cached:
+            return self.cached[i]
+
+        text_example = self.raw_data[i]["text"]  # adapt key if needed
+        data_dict = preprocess_plain_text([text_example], self.tokenizer, self.max_len)
+        item = {
+            "input_ids": data_dict["input_ids"][0],
+            "attention_mask": data_dict["attention_mask"][0],
+            "labels": data_dict["labels"][0],
+        }
+        self.cached[i] = item
+        return item
 
 
 def make_supervised_data_module(
-    tokenizer: transformers.PreTrainedTokenizer, data_args, max_len,
+    tokenizer: transformers.PreTrainedTokenizer,
+    data_args,
+    max_len,
 ) -> Dict:
-    """Make dataset and collator for supervised fine-tuning."""
-    dataset_cls = (
-        LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
-    )
-    rank0_print("Loading data...")
+    """
+    Hard-code the loading of each dataset type (RedPajama, Magpie, etc.).
+    We'll use `dataset_name` or a similar flag to decide which branch to load.
+    Adjust as needed for your real file paths or huggingface load calls.
+    """
+    # You could pass dataset_name in via data_args or some additional arg:
+    dataset_name = os.getenv("DATASET_NAME", "redpajama").lower()
+    dataset_name = data_args.dataset_name.lower() if data_args.dataset_name else dataset_name
+    # or do: dataset_name = data_args.dataset_name.lower() if you have that field
 
-    train_json = json.load(open(data_args.data_path, "r"))
-    train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len)
+    # Decide which dataset to load
+    if "redpajama" in dataset_name:
+        # Example: load from Hugging Face or local. 
+        # Or if you already have local JSON: 
+        # raw_train_data = json.load(open(data_args.data_path, "r"))
+        # 
+        # For demonstration, let's pretend we load from a HF dataset:
+        from datasets import load_dataset
+        raw = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", split="train[:1000]")
+        # Convert them into Python list of dict with "text" key
+        train_data = [{"text": ex["text"]} for ex in raw]
 
-    if data_args.eval_data_path:
-        eval_json = json.load(open(data_args.eval_data_path, "r"))
-        eval_dataset = dataset_cls(eval_json, tokenizer=tokenizer, max_len=max_len)
+        # Similarly for eval if data_args.eval_data_path is set:
+        eval_data = None
+        if data_args.eval_data_path:
+            # e.g. load a small eval subset (this is just an example)
+            raw_eval = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", split="train[1000:1100]")
+            eval_data = [{"text": ex["text"]} for ex in raw_eval]
+
+    elif "magpie" in dataset_name:
+        from datasets import load_dataset
+        raw = load_dataset("Magpie-Align/Magpie-Air-300K-Filtered", split="train[:2000]")
+        # Transform the 'conversations' into plain text if needed
+        train_data = []
+        for ex in raw:
+            # Example: combine all conversation turns into a single "text"
+            text_concat = ""
+            for c in ex["conversations"]:
+                # c["from"] = "human"/"gpt", c["value"] = ...
+                text_concat += c["from"].upper() + ": " + c["value"] + "\n"
+            train_data.append({"text": text_concat.strip()})
+
+        eval_data = None
+        if data_args.eval_data_path:
+            # Another small subset for eval, or load a local file, etc.
+            eval_data = ...  # same logic, if desired
+
     else:
-        eval_dataset = None
+        # Default fallback: assume local JSON file with {"text": "..."}
+        train_data = json.load(open(data_args.data_path, "r"))
+        eval_data = None
+        if data_args.eval_data_path:
+            eval_data = json.load(open(data_args.eval_data_path, "r"))
 
-    return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
+    # Now wrap in your LazySupervisedDataset (or SupervisedDataset) 
+    # as you currently do for plain-text.
+    dataset_cls = LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
+    train_dataset = dataset_cls(train_data, tokenizer, max_len)
+
+    eval_dataset = None
+    if eval_data is not None:
+        eval_dataset = dataset_cls(eval_data, tokenizer, max_len)
+
+    return {
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset
+    }
+
+
+
+
+
+# def make_supervised_data_module(
+#     tokenizer: transformers.PreTrainedTokenizer, data_args, max_len,
+# ) -> Dict:
+#     # """Make dataset and collator for supervised fine-tuning."""
+#     # dataset_cls = (
+#     #     LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
+#     # )
+#     # rank0_print("Loading data...")
+
+#     # train_json = json.load(open(data_args.data_path, "r"))
+#     # train_dataset = dataset_cls(train_json, tokenizer=tokenizer, max_len=max_len)
+
+#     # if data_args.eval_data_path:
+#     #     eval_json = json.load(open(data_args.eval_data_path, "r"))
+#     #     eval_dataset = dataset_cls(eval_json, tokenizer=tokenizer, max_len=max_len)
+#     # else:
+#     #     eval_dataset = None
+
+#     # return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
+    
+#     # Modified to assume data_path points to a plain-text JSON lines or similar.
+#     # Example of raw_data: [{"text": "some text..."}, {"text": "another line..."} ...]
+#     dataset_cls = (LazySupervisedDataset
+#                 if data_args.lazy_preprocess
+#                 else SupervisedDataset)
+#     raw_train_data = json.load(open(data_args.data_path, "r"))
+#     train_dataset = dataset_cls(raw_train_data, tokenizer, max_len)
+
+#     eval_dataset = None
+#     if data_args.eval_data_path:
+#         raw_eval_data = json.load(open(data_args.eval_data_path, "r"))
+#         eval_dataset = dataset_cls(raw_eval_data, tokenizer, max_len)
+
+#     return {
+#         "train_dataset": train_dataset,
+#         "eval_dataset": eval_dataset
+#     }
+
 
 
 def train():
