@@ -11,12 +11,15 @@ import torch
 from torch.utils.data import Dataset
 from deepspeed import zero
 from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
+
 import transformers
-from transformers import Trainer, GPTQConfig, deepspeed
+from transformers import Trainer, GPTQConfig
+import transformers.integrations.deepspeed as deepspeed
 from transformers.trainer_pt_utils import LabelSmoother
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from accelerate.utils import DistributedType
 
+import wandb
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -48,6 +51,26 @@ class TrainingArguments(transformers.TrainingArguments):
         },
     )
     use_lora: bool = False
+    ### ADDED FOR WANDB ###
+    # Let HF know we want to report logs to wandb.
+    # If you prefer, you can also do this at runtime using:
+    #   training_args.report_to = ["wandb"]
+    # in the `train()` function.
+
+    report_to: Optional[List[str]] = field(
+        default_factory=lambda: ["wandb"], 
+        metadata={"help": "List of integrations to report the results and logs to."}
+    )
+
+    wandb_project: str = field(
+        default="compression_pythia_scaling_sweep",
+        metadata={"help": "Wandb project name."}
+    )
+
+    wandb_run_name: str = field(
+        default="default name",
+        metadata={"help": "Wandb run name."}
+    )
 
 
 @dataclass
@@ -129,13 +152,13 @@ def preprocess(
     system_message: str = "You are a helpful assistant."
 ) -> Dict:
     roles = {"user": "<|im_start|>user", "assistant": "<|im_start|>assistant"}
-
-    im_start = tokenizer.im_start_id
-    im_end = tokenizer.im_end_id
-    nl_tokens = tokenizer('\n').input_ids
-    _system = tokenizer('system').input_ids + nl_tokens
-    _user = tokenizer('user').input_ids + nl_tokens
-    _assistant = tokenizer('assistant').input_ids + nl_tokens
+    
+    # Get the special tokens from tokenizer
+    chat_format = {
+        "system": "<|im_start|>system\n{}\n<|im_end|>\n",
+        "user": "<|im_start|>user\n{}\n<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n{}\n<|im_end|>\n"
+    }
 
     # Apply prompt templates
     input_ids, targets = [], []
@@ -144,30 +167,37 @@ def preprocess(
             source = source[1:]
 
         input_id, target = [], []
-        system = [im_start] + _system + tokenizer(system_message).input_ids + [im_end] + nl_tokens
-        input_id += system
-        target += [im_start] + [IGNORE_TOKEN_ID] * (len(system)-3) + [im_end] + nl_tokens
-        assert len(input_id) == len(target)
+        
+        # Add system message
+        system_text = chat_format["system"].format(system_message)
+        system_tokens = tokenizer.encode(system_text)
+        input_id += system_tokens
+        target += [IGNORE_TOKEN_ID] * len(system_tokens)
+        
         for j, sentence in enumerate(source):
-            role = roles[sentence["from"]]
-            _input_id = tokenizer(role).input_ids + nl_tokens + \
-                tokenizer(sentence["value"]).input_ids + [im_end] + nl_tokens
-            input_id += _input_id
-            if role == '<|im_start|>user':
-                _target = [im_start] + [IGNORE_TOKEN_ID] * (len(_input_id)-3) + [im_end] + nl_tokens
-            elif role == '<|im_start|>assistant':
-                _target = [im_start] + [IGNORE_TOKEN_ID] * len(tokenizer(role).input_ids) + \
-                    _input_id[len(tokenizer(role).input_ids)+1:-2] + [im_end] + nl_tokens
+            role = sentence["from"]
+            text = chat_format[role].format(sentence["value"])
+            tokens = tokenizer.encode(text)
+            
+            input_id += tokens
+            if role == "user":
+                target += [IGNORE_TOKEN_ID] * len(tokens)
+            elif role == "assistant":
+                target += tokens
             else:
                 raise NotImplementedError
-            target += _target
-        assert len(input_id) == len(target)
+                
+        # Truncate and pad
+        input_id = input_id[:max_len]
+        target = target[:max_len]
         input_id += [tokenizer.pad_token_id] * (max_len - len(input_id))
         target += [IGNORE_TOKEN_ID] * (max_len - len(target))
-        input_ids.append(input_id[:max_len])
-        targets.append(target[:max_len])
-    input_ids = torch.tensor(input_ids, dtype=torch.int)
-    targets = torch.tensor(targets, dtype=torch.int)
+        
+        input_ids.append(input_id)
+        targets.append(target)
+
+    input_ids = torch.tensor(input_ids, dtype=torch.long)
+    targets = torch.tensor(targets, dtype=torch.long)
 
     return dict(
         input_ids=input_ids,
@@ -175,30 +205,6 @@ def preprocess(
         attention_mask=input_ids.ne(tokenizer.pad_token_id),
     )
 
-
-class SupervisedDataset(Dataset):
-    """Dataset for supervised fine-tuning."""
-
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, max_len: int):
-        super(SupervisedDataset, self).__init__()
-
-        rank0_print("Formatting inputs...")
-        sources = [example["conversations"] for example in raw_data]
-        data_dict = preprocess(sources, tokenizer, max_len)
-
-        self.input_ids = data_dict["input_ids"]
-        self.labels = data_dict["labels"]
-        self.attention_mask = data_dict["attention_mask"]
-
-    def __len__(self):
-        return len(self.input_ids)
-
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        return dict(
-            input_ids=self.input_ids[i],
-            labels=self.labels[i],
-            attention_mask=self.attention_mask[i],
-        )
 
 
 class LazySupervisedDataset(Dataset):
@@ -255,6 +261,7 @@ def make_supervised_data_module(
 
 def train():
     global local_rank
+    
 
     parser = transformers.HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments, LoraArguments)
@@ -265,6 +272,12 @@ def train():
         training_args,
         lora_args,
     ) = parser.parse_args_into_dataclasses()
+
+    wandb.init(project=training_args.wandb_project, name=training_args.wandb_run_name)
+
+    # If you didn't set `report_to=["wandb"]` in your TrainingArguments definition,
+    # you can set it here at runtime:
+    training_args.report_to = ["wandb"]
 
     # This serves for single-gpu qlora.
     if getattr(training_args, 'deepspeed', None) and int(os.environ.get("WORLD_SIZE", 1))==1:
@@ -325,7 +338,9 @@ def train():
         use_fast=False,
         trust_remote_code=True,
     )
-    tokenizer.pad_token_id = tokenizer.eod_id
+    
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id  # Qwen2 uses eos_token_id instead of eod_id
 
     if training_args.use_lora:
         if lora_args.q_lora or is_chat_model:
@@ -368,6 +383,9 @@ def train():
     trainer.save_state()
 
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir, bias=lora_args.lora_bias)
+    ### ADDED FOR WANDB ###
+    # Finish the wandb run to ensure logs are uploaded
+    wandb.finish()
 
 
 if __name__ == "__main__":
