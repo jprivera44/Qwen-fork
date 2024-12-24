@@ -15,7 +15,7 @@ conda activate zion
 # Launch fine-tuning using torchrun
 #--model_name_or_path "/data/public_models/Qwen2-0.5B" \
 torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0 --master_addr=localhost --master_port=6601 ../../../../finetune.py \
-    --model_name_or_path "/data/public_models/Qwen2-1.5B-Instruct" \
+    --model_name_or_path "/data/public_models/compressed__7b_nc2_ogs32_igs1_sb1" \
     --bf16 True \
     --dataset_name "redpajama" \
     --output_dir "output_qwen" \
@@ -35,8 +35,8 @@ torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0 --master_addr=localhost --m
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --report_to "wandb" \
-    --wandb_project "qwen_2-1-5-redpajama_test_run" \
-    --wandb_run_name "test_run_more_data" \
+    --wandb_project "qwen_2-1-5-compressed_run" \
+    --wandb_run_name "first_test" \
     --model_max_length 512 \
     --gradient_checkpointing True \
     --lazy_preprocess True \

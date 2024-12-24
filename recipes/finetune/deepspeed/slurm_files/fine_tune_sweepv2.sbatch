@@ -56,12 +56,12 @@ torchrun \
   --nproc_per_node=4 --nnodes=1 \
   --master_addr=localhost --master_port="$PORT" \
   ../../../../finetune.py \
-    --model_name_or_path "/data/public_models/Qwen2-1.5B-Instruct" \
+    --model_name_or_path "/data/public_models/compressed__7b_nc2_ogs32_igs1_sb1" \
     --bf16 True \
     --dataset_name "redpajama" \
     --output_dir "${OUTDIR}" \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 1 \
+    --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 16 \
     --evaluation_strategy "no" \
@@ -75,7 +75,7 @@ torchrun \
     --lr_scheduler_type "${SCHED}" \
     --logging_steps 1 \
     --report_to "wandb" \
-    --wandb_project "qwen_sweep_reduce_spikes" \
+    --wandb_project "compressed_qwen_sweep_reduce_spikes" \
     --wandb_run_name "${RUN_NAME}" \
     --model_max_length 512 \
     --gradient_checkpointing True \
