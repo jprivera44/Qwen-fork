@@ -48,6 +48,16 @@ class DataArguments:
         default=1000,
         metadata={"help": "Number of examples to use for training. -1 means use all available data."}
     )
+
+    rp_subset_size: int = field(
+        default=10000,
+        metadata={"help": "Number of examples for RedPajama. -1 = use full data."}
+    )
+
+    magpie_subset_size: int = field(
+        default=10000,
+        metadata={"help": "Number of examples for Magpie. -1 = use full data."}
+    )
     
 
 
@@ -213,80 +223,87 @@ class LazySupervisedDataset(Dataset):
         }
         self.cached[i] = item
         return item
-
+    
 
 def make_supervised_data_module(
     tokenizer: transformers.PreTrainedTokenizer,
-    data_args,
-    max_len,
+    data_args: DataArguments,
+    max_len: int,
 ) -> Dict:
-    dataset_name = os.getenv("DATASET_NAME", "redpajama").lower()
-    dataset_name = data_args.dataset_name.lower() if data_args.dataset_name else dataset_name
+    dataset_name = (data_args.dataset_name or os.getenv("DATASET_NAME", "redpajama")).lower()
 
     if "redpajama" in dataset_name:
         from datasets import load_dataset, load_from_disk
-        
-        # Load from local path if it exists, otherwise from HuggingFace
+
         if data_args.data_path and os.path.exists(data_args.data_path):
             full_dataset = load_from_disk(data_args.data_path)
         else:
             full_dataset = load_dataset("togethercomputer/RedPajama-Data-1T-Sample", split="train")
-        
-        # Shuffle the dataset
+
         full_dataset = full_dataset.shuffle(seed=42)
-        
-        # Calculate sizes using your logic
-        total_size = min(data_args.subset_size + 1000, len(full_dataset))
-        train_size = min(data_args.subset_size, total_size - 1000)
+
+        # Grab the subset size for RedPajama
+        rp_size = data_args.rp_subset_size
+        # -1 means "use full" -> interpret how you want (here we just won't slice)
+        if rp_size == -1:
+            rp_size = len(full_dataset)
+
+        total_size = min(rp_size + 1000, len(full_dataset))
+        train_size = min(rp_size, total_size - 1000)
         eval_size = min(1000, total_size - train_size)
-        
-        # Select training and evaluation subsets
+
+        print(f"[RedPajama] rp_subset_size param: {data_args.rp_subset_size}")
+        print(f"[RedPajama] total_size: {total_size}, train_size: {train_size}, eval_size: {eval_size}")
+
         raw_train = full_dataset.select(range(train_size))
         raw_eval = full_dataset.select(range(train_size, train_size + eval_size))
-        
+
         train_data = [{"text": ex["text"]} for ex in raw_train]
         eval_data = [{"text": ex["text"]} for ex in raw_eval]
 
     elif "magpie" in dataset_name:
         from datasets import load_dataset
-        
-        # Load and shuffle the full dataset
         full_dataset = load_dataset("Magpie-Align/Magpie-Air-300K-Filtered", split="train")
         full_dataset = full_dataset.shuffle(seed=42)
-        
-        # Calculate sizes using same logic
-        total_size = min(data_args.subset_size + 1000, len(full_dataset))
-        train_size = min(data_args.subset_size, total_size - 1000)
+
+        # Grab the subset size for Magpie
+        mg_size = data_args.magpie_subset_size
+        if mg_size == -1:
+            mg_size = len(full_dataset)
+
+        total_size = min(mg_size + 1000, len(full_dataset))
+        train_size = min(mg_size, total_size - 1000)
         eval_size = min(1000, total_size - train_size)
-        
-        # Select subsets
+
+        print(f"[Magpie]   magpie_subset_size param: {data_args.magpie_subset_size}")
+        print(f"[Magpie]   total_size: {total_size}, train_size: {train_size}, eval_size: {eval_size}")
+
         raw_train = full_dataset.select(range(train_size))
         raw_eval = full_dataset.select(range(train_size, train_size + eval_size))
-        
-        # Process training data
+
         train_data = []
         for ex in raw_train:
             text_concat = ""
             for c in ex["conversations"]:
-                text_concat += c["from"].upper() + ": " + c["value"] + "\n"
+                text_concat += f"{c['from'].upper()}: {c['value']}\n"
             train_data.append({"text": text_concat.strip()})
-        
-        # Process evaluation data
+
         eval_data = []
         for ex in raw_eval:
             text_concat = ""
             for c in ex["conversations"]:
-                text_concat += c["from"].upper() + ": " + c["value"] + "\n"
+                text_concat += f"{c['from'].upper()}: {c['value']}\n"
             eval_data.append({"text": text_concat.strip()})
 
     else:
-        # Default fallback remains the same
+        # Some fallback logic
         train_data = json.load(open(data_args.data_path, "r"))
         eval_data = None
         if data_args.eval_data_path:
             eval_data = json.load(open(data_args.eval_data_path, "r"))
 
     dataset_cls = LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
+
     train_dataset = dataset_cls(train_data, tokenizer, max_len)
     eval_dataset = dataset_cls(eval_data, tokenizer, max_len) if eval_data is not None else None
 
@@ -294,6 +311,9 @@ def make_supervised_data_module(
         "train_dataset": train_dataset,
         "eval_dataset": eval_dataset
     }
+
+
+
 
 
 
