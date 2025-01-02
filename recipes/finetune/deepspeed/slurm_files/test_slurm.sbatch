@@ -11,9 +11,15 @@
 # Load the environment
 source /data/jp_rivera/miniconda3/etc/profile.d/conda.sh
 conda activate zion
+
+#Things removed
 # --data_path "../Belle_sampled_qwen.json" \
 # Launch fine-tuning using torchrun
 #--model_name_or_path "/data/public_models/Qwen2-0.5B" \
+# --save_strategy "no" \
+# --save_steps 1000 \
+
+
 torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0 --master_addr=localhost --master_port=6601 ../../../../finetune.py \
     --model_name_or_path "/data/public_models/compressed__7b_nc2_ogs32_igs1_sb1" \
     --bf16 True \
@@ -25,9 +31,7 @@ torchrun --nproc_per_node=4 --nnodes=1 --node_rank=0 --master_addr=localhost --m
     --gradient_accumulation_steps 16 \
     --subset_size 9000 \
     --evaluation_strategy "no" \
-    --save_strategy "steps" \
-    --save_steps 1000 \
-    --save_total_limit 10 \
+    --save_total_limit 1 \
     --learning_rate 1e-5 \
     --weight_decay 0.1 \
     --adam_beta2 0.95 \
