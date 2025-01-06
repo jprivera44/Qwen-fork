@@ -422,6 +422,8 @@ def train():
     ################################################################
     # 1) First finetuning stage: Magpie
     ################################################################
+
+    # 1) Create the Trainer once
     data_args.dataset_name = "magpie"
 
     data_module = make_supervised_data_module(
@@ -437,31 +439,24 @@ def train():
         **data_module
     )
 
+    # 2) Train on the first dataset
     print("=== Starting first fine-tuning pass on Magpie ===")
     trainer.train()
     trainer.save_state()
 
-    ################################################################
-    # 2) Second finetuning stage: RedPajama
-    ################################################################
-    # Optionally adjust hyperparameters for second stage
-    # e.g. training_args.learning_rate = 5e-5
-
+    # 3) Change the dataset to RedPajama
     data_args.dataset_name = "redpajama"
-
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, 
         data_args=data_args, 
         max_len=training_args.model_max_length,
     )
 
-    trainer = Trainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        **data_module
-    )
+    # Manually update trainer's datasets
+    trainer.train_dataset = data_module["train_dataset"]
+    trainer.eval_dataset = data_module["eval_dataset"]
 
+    # 4) Train on the new dataset
     print("=== Starting second fine-tuning pass on RedPajama ===")
     trainer.train()
     trainer.save_state()
@@ -469,11 +464,11 @@ def train():
     ################################################################
     # 3) Save final model
     ################################################################
-    # safe_save_model_for_hf_trainer(
-    #     trainer=trainer,
-    #     output_dir=training_args.output_dir,
-    #     bias=lora_args.lora_bias
-    # )
+    safe_save_model_for_hf_trainer(
+        trainer=trainer,
+        output_dir=training_args.output_dir,
+        bias=lora_args.lora_bias
+    )
 
     # Finish W&B
     wandb.finish()
