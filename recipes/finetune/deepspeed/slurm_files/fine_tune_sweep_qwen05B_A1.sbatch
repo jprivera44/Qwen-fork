@@ -21,14 +21,14 @@ LR=3e-6           # learning rate
 WARM=0.15         # warmup ratio
 SCHED="polynomial"
 GC=0.1            # gradient clipping
-MAGPIE_SUBSET=50000
-RP_SUBSET=500000
+MAGPIE_SUBSET=500000
+RP_SUBSET=5000000
 EPOCHS=1
 PER_DEV_BATCH=8
 GRAD_ACC=16
 
-RUN_NAME="epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
-OUTDIR="output_qwen_05_A1_${RUN_NAME}"
+RUN_NAME="new_epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
+OUTDIR="/data/public_models/jp_rivera/output_qwen_05_A1_1${RUN_NAME}"
 PORT=47400  # or pick another free port
 
 echo "=== Starting single-run job with LR=$LR, Warmup=$WARM, Sched=$SCHED, GC=$GC, EPOCHS=$EPOCHS ==="

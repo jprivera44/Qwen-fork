@@ -423,8 +423,6 @@ def train():
     # 1) First finetuning stage: Magpie
     ################################################################
 
-    # 1) Create the Trainer once
-    data_args.dataset_name = "magpie"
 
     data_module = make_supervised_data_module(
         tokenizer=tokenizer, 
@@ -440,26 +438,10 @@ def train():
     )
 
     # 2) Train on the first dataset
-    print("=== Starting first fine-tuning pass on Magpie ===")
+    print("=== Starting first fine-tuning pass on ===", data_args.dataset_name)
     trainer.train()
     trainer.save_state()
 
-    # 3) Change the dataset to RedPajama
-    data_args.dataset_name = "redpajama"
-    data_module = make_supervised_data_module(
-        tokenizer=tokenizer, 
-        data_args=data_args, 
-        max_len=training_args.model_max_length,
-    )
-
-    # Manually update trainer's datasets
-    trainer.train_dataset = data_module["train_dataset"]
-    trainer.eval_dataset = data_module["eval_dataset"]
-
-    # 4) Train on the new dataset
-    print("=== Starting second fine-tuning pass on RedPajama ===")
-    trainer.train()
-    trainer.save_state()
 
     ################################################################
     # 3) Save final model

@@ -21,15 +21,15 @@ LR=3e-6           # learning rate
 WARM=0.15         # warmup ratio
 SCHED="polynomial"
 GC=0.1            # gradient clipping
-MAGPIE_SUBSET=500000
+MAGPIE_SUBSET=0
 RP_SUBSET=5000000
 EPOCHS=1
 PER_DEV_BATCH=8
 GRAD_ACC=16
 
 RUN_NAME="epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
-OUTDIR="/data/public_models/jp_rivera/output_qwen_M3_${RUN_NAME}"
-PORT=47425  # or pick another free port
+OUTDIR="/data/public_models/jp_rivera/output_qwen_M2_05bpp_rp${RUN_NAME}"
+PORT=47430  # or pick another free port
 
 echo "=== Starting single-run job with LR=$LR, Warmup=$WARM, Sched=$SCHED, GC=$GC, EPOCHS=$EPOCHS ==="
 echo "=== Magpie subset = $MAGPIE_SUBSET, RedPajama subset = $RP_SUBSET ==="
@@ -41,10 +41,10 @@ echo "=== Per-device batch = $PER_DEV_BATCH, Grad accum = $GRAD_ACC, Port=$PORT 
 torchrun \
   --nproc_per_node=4 --nnodes=1 \
   --master_addr=localhost --master_port="$PORT" \
-  ../../../../finetune.py \
-    --model_name_or_path "/data/public_models/compressed_Qwen2-7B-Instruct_7b_nc1_ogs8_igs1_sb1" \
+  ../../../../finetune_3.py \
+    --model_name_or_path "/data/public_models/jp_rivera/output_qwen_M2_epoch1_lr3e-6_warm0.15_polynomial_gc0.1_batch8/checkpoint-584/" \
     --bf16 True \
-    --dataset_name "magpie" \
+    --dataset_name "redpajama" \
     --magpie_subset_size "${MAGPIE_SUBSET}" \
     --rp_subset_size "${RP_SUBSET}" \
     --output_dir "${OUTDIR}" \
@@ -68,7 +68,7 @@ torchrun \
     --logging_steps 1 \
     --logging_first_step true \
     --report_to "wandb" \
-    --wandb_project "compressed_qwen_7B_instruct_M3" \
+    --wandb_project "compressed_qwen_7B_instruct_M2" \
     --wandb_run_name "${RUN_NAME}" \
     --model_max_length 512 \
     --gradient_checkpointing True \
@@ -76,7 +76,7 @@ torchrun \
     --deepspeed "../../../../finetune/ds_config_zero2.json" \
     --optim "adamw_torch" \
     --gradient_clipping "${GC}" \
-    --seed 87 \
+    --seed 23 \
     --dataloader_num_workers 4 \
     --dataloader_pin_memory true
 
