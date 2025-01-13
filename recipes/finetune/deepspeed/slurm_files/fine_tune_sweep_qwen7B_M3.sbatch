@@ -21,13 +21,13 @@ LR=3e-6           # learning rate
 WARM=0.15         # warmup ratio
 SCHED="polynomial"
 GC=0.1            # gradient clipping
-MAGPIE_SUBSET=500000
-RP_SUBSET=5000000
+MAGPIE_SUBSET=0
+RP_SUBSET=50000000
 EPOCHS=1
 PER_DEV_BATCH=8
 GRAD_ACC=16
 
-RUN_NAME="epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
+RUN_NAME="only_redpajama_epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
 OUTDIR="/data/public_models/jp_rivera/output_qwen_M3_${RUN_NAME}"
 PORT=47425  # or pick another free port
 
@@ -42,9 +42,9 @@ torchrun \
   --nproc_per_node=4 --nnodes=1 \
   --master_addr=localhost --master_port="$PORT" \
   ../../../../finetune.py \
-    --model_name_or_path "/data/public_models/compressed_Qwen2-7B-Instruct_7b_nc1_ogs8_igs1_sb1" \
+    --model_name_or_path "/data/public_models/jp_rivera/output_qwen_M3_epoch1_lr3e-6_warm0.15_polynomial_gc0.1_batch8/checkpoint-584/" \
     --bf16 True \
-    --dataset_name "magpie" \
+    --dataset_name "redpajama" \
     --magpie_subset_size "${MAGPIE_SUBSET}" \
     --rp_subset_size "${RP_SUBSET}" \
     --output_dir "${OUTDIR}" \

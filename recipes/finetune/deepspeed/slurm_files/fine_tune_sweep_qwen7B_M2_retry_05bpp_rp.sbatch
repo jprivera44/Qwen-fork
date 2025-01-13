@@ -13,7 +13,7 @@
 # ------------------------------------------------------------------------------
 source /data/jp_rivera/miniconda3/etc/profile.d/conda.sh
 conda activate zion
-
+#size and up to the point for the dataset just now 5000000
 # ------------------------------------------------------------------------------
 # 2) Set single-run hyperparameters
 # ------------------------------------------------------------------------------
@@ -22,12 +22,14 @@ WARM=0.15         # warmup ratio
 SCHED="polynomial"
 GC=0.1            # gradient clipping
 MAGPIE_SUBSET=0
-RP_SUBSET=5000000
+RP_SUBSET=400000
+#RP_START=500000  
+RP_START=5000000
 EPOCHS=1
 PER_DEV_BATCH=8
 GRAD_ACC=16
 
-RUN_NAME="epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
+RUN_NAME="only_rpj_2nd_5M_epoch${EPOCHS}_lr${LR}_warm${WARM}_${SCHED}_gc${GC}_batch${PER_DEV_BATCH}"
 OUTDIR="/data/public_models/jp_rivera/output_qwen_M2_05bpp_rp${RUN_NAME}"
 PORT=47430  # or pick another free port
 
@@ -41,12 +43,13 @@ echo "=== Per-device batch = $PER_DEV_BATCH, Grad accum = $GRAD_ACC, Port=$PORT 
 torchrun \
   --nproc_per_node=4 --nnodes=1 \
   --master_addr=localhost --master_port="$PORT" \
-  ../../../../finetune_3.py \
-    --model_name_or_path "/data/public_models/jp_rivera/output_qwen_M2_epoch1_lr3e-6_warm0.15_polynomial_gc0.1_batch8/checkpoint-584/" \
+  ../../../../finetune_2.py \
+    --model_name_or_path "/data/public_models/jp_rivera/output_qwen_M2_05bpp_rpepoch1_lr3e-6_warm0.15_polynomial_gc0.1_batch8/checkpoint-1815/" \
     --bf16 True \
     --dataset_name "redpajama" \
     --magpie_subset_size "${MAGPIE_SUBSET}" \
     --rp_subset_size "${RP_SUBSET}" \
+    --rp_start_idx "${RP_START}" \
     --output_dir "${OUTDIR}" \
     --num_train_epochs "${EPOCHS}" \
     --per_device_train_batch_size "${PER_DEV_BATCH}" \
